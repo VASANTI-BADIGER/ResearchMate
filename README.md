@@ -111,3 +111,13 @@ GitHub: https://github.com/VASANTI-BADIGER
 ---
 
 *ResearchMate – Making research paper reading easier.*
+
+## 🖼️ Application Screenshots
+
+### 1. Research Paper Summary
+
+![Research Paper Summary](screenshots/summary.png)
+
+### 2. Question Answering
+
+![Question Answering](screenshots/question_answer.png)

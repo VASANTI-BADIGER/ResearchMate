@@ -6,9 +6,10 @@ def test_answer_question():
     text = extract_text_from_pdf("uploaded_paper.pdf")
 
     answer = answer_question(
-        "How can LLMs help with drug development?",
+        "What is prompt engineering in LLMs?",
         text
     )
 
     assert isinstance(answer, str)
-    assert "drug development" in answer.lower()
+    assert "prompt engineering" in answer.lower()
+    assert "natural language queries" in answer.lower()

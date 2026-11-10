@@ -4,42 +4,96 @@ import re
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from src.paragraph_search import split_into_paragraphs
+
+CHALLENGE_KEYWORDS = [
+    "hallucination",
+    "factually accurate",
+    "contradicts information",
+    "limited knowledge",
+    "obsolete information",
+    "outdated data",
+    "retraining",
+    "prompt engineering",
+    "prompt variations",
+    "safety",
+    "controllability",
+    "harmful content",
+    "misleading content",
+    "security",
+    "privacy",
+    "personal information",
+    "computational cost",
+    "hardware capacity",
+    "ethical challenges"
+]
 
 
-def clean_answer_sentence(sentence):
-    sentence = re.sub(r"\s+", " ", sentence).strip()
-
-    # Remove incomplete citation fragments at the beginning.
-    sentence = re.sub(
-        r"^(?:\(?\d{4}\)?[,.;:]?\s*)+",
-        "",
-        sentence
+def prepare_sentences(text):
+    # Join words split across PDF lines.
+    text = re.sub(
+        r"([A-Za-z]{2,})-\s*\n\s*([a-z]{2,})",
+        r"\1\2",
+        text
     )
 
-    # Reject sentences beginning with obvious PDF extraction noise.
-    if re.match(
-        r"^(?:ai use AI|use AI to help|"
-        r"\d{4}\s*\)|Table\s+\d+)",
-        sentence,
-        re.IGNORECASE
-    ):
-        return ""
+    text = re.sub(r"\s+", " ", text)
 
-    return sentence.strip()
+    # Remove references section.
+    match = re.search(
+        r"\bReferences\b",
+        text,
+        re.IGNORECASE
+    )
+
+    if match and match.start() > len(text) * 0.50:
+        text = text[:match.start()]
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+
+    cleaned = []
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+
+        if len(sentence.split()) < 8:
+            continue
+
+        if re.search(
+            r"Email addresses:|Figure\s+\d+:|"
+            r"Equal contribution|arxiv preprint|"
+            r"doi:|proceedings of the",
+            sentence,
+            re.IGNORECASE
+        ):
+            continue
+
+        cleaned.append(sentence)
+
+    return cleaned
 
 
 def answer_question(question, text):
+
     if not question.strip():
         return "Please enter a question."
 
     if not text.strip():
-        return "No text is available to answer this question."
+        return "No text is available."
 
-    chunks = split_into_paragraphs(text)
+    sentences = prepare_sentences(text)
 
-    if not chunks:
-        return "No readable text chunks were found in the paper."
+    if not sentences:
+        return "No meaningful text was found."
+
+    expanded_question = question
+
+    # Expand limitation and challenge questions.
+    if re.search(
+        r"limitation|challenge|problem|drawback|weakness",
+        question,
+        re.IGNORECASE
+    ):
+        expanded_question += " " + " ".join(CHALLENGE_KEYWORDS)
 
     try:
         vectorizer = TfidfVectorizer(
@@ -48,81 +102,52 @@ def answer_question(question, text):
             sublinear_tf=True
         )
 
-        chunk_vectors = vectorizer.fit_transform(
-            [question] + chunks
+        vectors = vectorizer.fit_transform(
+            [expanded_question] + sentences
         )
 
-        chunk_scores = cosine_similarity(
-            chunk_vectors[0:1],
-            chunk_vectors[1:]
+        scores = cosine_similarity(
+            vectors[0:1],
+            vectors[1:]
         )[0]
 
-        best_index = chunk_scores.argmax()
+        # Give relevant challenge sentences an additional score.
+        for index, sentence in enumerate(sentences):
+            sentence_lower = sentence.lower()
 
-        if chunk_scores[best_index] < 0.05:
-            return "I could not find a relevant answer in the paper."
+            keyword_matches = sum(
+                1 for keyword in CHALLENGE_KEYWORDS
+                if keyword in sentence_lower
+            )
 
-        best_chunk = chunks[best_index]
+            if keyword_matches:
+                scores[index] += keyword_matches * 0.08
 
-        sentences = re.split(
-            r"(?<=[.!?])\s+",
-            best_chunk
-        )
+        best_indices = scores.argsort()[::-1]
 
-        sentences = [
-            clean_answer_sentence(sentence)
-            for sentence in sentences
-        ]
+        selected = []
 
-        sentences = [
-            sentence for sentence in sentences
-            if len(sentence.split()) >= 8
-        ]
+        for index in best_indices:
+            if scores[index] < 0.04:
+                continue
 
-        if not sentences:
-            return "No meaningful answer was found."
+            sentence = sentences[index]
 
-        sentence_vectorizer = TfidfVectorizer(
-            stop_words="english",
-            ngram_range=(1, 2),
-            sublinear_tf=True
-        )
+            if sentence not in selected:
+                selected.append(sentence)
 
-        sentence_vectors = sentence_vectorizer.fit_transform(
-            [question] + sentences
-        )
-
-        sentence_scores = cosine_similarity(
-            sentence_vectors[0:1],
-            sentence_vectors[1:]
-        )[0]
-
-        threshold = max(
-            0.05,
-            sentence_scores.max() * 0.40
-        )
-
-        selected = [
-            i for i, score in enumerate(sentence_scores)
-            if score >= threshold
-        ]
+            if len(selected) == 4:
+                break
 
         if not selected:
             return "I could not find a relevant answer in the paper."
 
+        # Preserve the original paper order.
         selected.sort(
-            key=lambda i: sentence_scores[i],
-            reverse=True
+            key=lambda sentence: sentences.index(sentence)
         )
 
-        selected = selected[:3]
-
-        answer = " ".join(
-            sentences[i] for i in selected
-        )
-
-        return re.sub(r"\s+", " ", answer).strip()
+        return " ".join(selected)
 
     except ValueError:
-        return "I could not find enough meaningful text to answer."
-
+        return "Not enough meaningful text was found to answer."

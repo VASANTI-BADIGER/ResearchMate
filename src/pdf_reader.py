@@ -8,33 +8,83 @@ def extract_text_from_pdf(pdf_path):
 
     with pymupdf.open(pdf_path) as pdf:
         for page in pdf:
-            page_text = page.get_text("text", sort=True)
 
-            # Join words split by a hyphen at a line break
-            page_text = re.sub(
-                r"([A-Za-z]{2,})-\s*\n\s*([a-z]{2,})",
-                r"\1\2",
-                page_text
+            page_width = page.rect.width
+
+            blocks = page.get_text("blocks", sort=True)
+
+            page_blocks = []
+
+            for block in blocks:
+
+                # Ignore image blocks.
+                if len(block) < 7 or block[6] != 0:
+                    continue
+
+                x0, y0, x1, y1 = block[:4]
+                block_text = block[4].strip()
+
+                if not block_text:
+                    continue
+
+                # Remove repeated spaces.
+                block_text = re.sub(
+                    r"[ \t]+",
+                    " ",
+                    block_text
+                )
+
+                # Remove standalone page numbers.
+                block_text = re.sub(
+                    r"(?m)^\s*\d+\s*$",
+                    "",
+                    block_text
+                )
+
+                block_text = block_text.strip()
+
+                if len(block_text) < 15:
+                    continue
+
+                page_blocks.append({
+                    "x0": x0,
+                    "y0": y0,
+                    "x1": x1,
+                    "y1": y1,
+                    "text": block_text
+                })
+
+            # Separate full-width blocks and column blocks.
+            full_width = []
+            left_column = []
+            right_column = []
+
+            for block in page_blocks:
+
+                block_width = block["x1"] - block["x0"]
+
+                if block_width > page_width * 0.60:
+                    full_width.append(block)
+
+                elif block["x0"] < page_width * 0.50:
+                    left_column.append(block)
+
+                else:
+                    right_column.append(block)
+
+            # Sort blocks vertically.
+            full_width.sort(key=lambda b: b["y0"])
+            left_column.sort(key=lambda b: b["y0"])
+            right_column.sort(key=lambda b: b["y0"])
+
+            ordered_blocks = (
+                full_width + left_column + right_column
             )
 
-            # Replace repeated spaces and tabs
-            page_text = re.sub(r"[ \t]+", " ", page_text)
+            page_text = "\n\n".join(
+                block["text"] for block in ordered_blocks
+            )
 
-            # Remove page-number-only lines
-            lines = page_text.splitlines()
-            cleaned_lines = []
+            extracted_pages.append(page_text)
 
-            for line in lines:
-                line = line.strip()
-
-                if not line:
-                    continue
-
-                if re.fullmatch(r"\d+", line):
-                    continue
-
-                cleaned_lines.append(line)
-
-            extracted_pages.append("\n".join(cleaned_lines))
-
-    return "\n".join(extracted_pages)
+    return "\n\n".join(extracted_pages)
